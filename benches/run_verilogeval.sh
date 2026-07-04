@@ -23,17 +23,23 @@ KEY=$1
 MAX_TOKENS=${2:-32768}
 JOBS="${JOBS:-128}"
 SAMPLES="${SAMPLES:-1}"
-TEMP="${TEMP:-0}"
+GEN_TEMP="${TEMP:-0}"
 TOPP="${TOPP:-0.01}"
 [ -z "$KEY" ] && { echo "usage: [SAMPLES=n TEMP=t] run_verilogeval.sh <served_name> [max_tokens]"; exit 1; }
+
+# iverilog/vvp read the TEMP/TMP env vars for their scratch dir. If the sampling
+# temperature is left in $TEMP, iverilog tries to write to a dir literally named
+# "0.8" and EVERY compile fails -> pass_rate=0. Scrub them; pin TMPDIR.
+unset TEMP TMP
+export TMPDIR="${TMPDIR:-/tmp}"
 
 require_engine
 for TASK in spec-to-rtl code-complete-iccad2023; do
   BUILD="$RESULTS_DIR/$KEY/$TASK"
   mkdir -p "$BUILD"; cd "$BUILD"
   "$VE_ROOT/configure" --with-model="$KEY" --with-task="$TASK" \
-    --with-examples=0 --with-samples=$SAMPLES --with-temperature=$TEMP --with-top-p=$TOPP > configure.log 2>&1
+    --with-examples=0 --with-samples=$SAMPLES --with-temperature=$GEN_TEMP --with-top-p=$TOPP > configure.log 2>&1
   make -j$JOBS MAX_TOKENS=$MAX_TOKENS > make.log 2>&1 || true
   echo "[$KEY/$TASK] $(grep pass_rate summary.txt 2>/dev/null | tail -1)"
 done
-log "DONE $KEY (SAMPLES=$SAMPLES TEMP=$TEMP)"
+log "DONE $KEY (SAMPLES=$SAMPLES GEN_TEMP=$GEN_TEMP)"
