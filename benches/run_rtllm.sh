@@ -16,13 +16,17 @@ load_verilog_toolchain
 
 KEY=$1
 [ -z "$KEY" ] && { echo "usage: [SAMPLES=n TEMP=t] run_rtllm.sh <served_name>"; exit 1; }
-SAMPLES="${SAMPLES:-1}"; TEMP="${TEMP:-0}"; WORKERS="${WORKERS:-64}"; MAXTOK="${MAXTOK:-32768}"
+SAMPLES="${SAMPLES:-1}"; GEN_TEMP="${TEMP:-0}"; WORKERS="${WORKERS:-64}"; MAXTOK="${MAXTOK:-32768}"
+# iverilog/vvp read TEMP/TMP as their scratch dir. The sampling temperature in
+# $TEMP makes iverilog write to a dir named "0.8" -> every compile fails -> 0.0.
+unset TEMP TMP
+export TMPDIR="${TMPDIR:-/tmp}"
 
 require_engine
-log "RTLLM $KEY (samples=$SAMPLES temp=$TEMP workers=$WORKERS)"
+log "RTLLM $KEY (samples=$SAMPLES temp=$GEN_TEMP workers=$WORKERS)"
 mkdir -p "$RESULTS_DIR/$KEY/rtllm"
 "$SYS_PY" "$BENCHINFRA_ROOT/benches/run_rtllm.py" --base-url "$OPENAI_BASE_URL" --model "$KEY" \
-  --out "$RESULTS_DIR/$KEY/rtllm" --workers $WORKERS --num-samples $SAMPLES --temperature $TEMP --max-tokens $MAXTOK \
+  --out "$RESULTS_DIR/$KEY/rtllm" --workers $WORKERS --num-samples $SAMPLES --temperature $GEN_TEMP --max-tokens $MAXTOK \
   > "$RESULTS_DIR/$KEY/rtllm.log" 2>&1 || log "rtllm nonzero"
 grep '\[rtllm\]' "$RESULTS_DIR/$KEY/rtllm.log" | tail -1
 log "DONE $KEY"

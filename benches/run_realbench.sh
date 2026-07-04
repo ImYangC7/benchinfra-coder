@@ -23,7 +23,11 @@ RB="${RB_ROOT:-$CODERBENCH_ROOT/RealBench}"
 RB_PY="${REALBENCH_PY:-$RB/.venv/bin/python}"
 KEY=$1
 [ -z "$KEY" ] && { echo "usage: [SAMPLES=n TEMP=t MAXTOK=m] run_realbench.sh <served_name>"; exit 1; }
-SAMPLES="${SAMPLES:-1}"; TEMP="${TEMP:-0.8}"; WORKERS="${WORKERS:-60}"; MAXTOK="${MAXTOK:-32768}"
+SAMPLES="${SAMPLES:-1}"; GEN_TEMP="${TEMP:-0.8}"; WORKERS="${WORKERS:-60}"; MAXTOK="${MAXTOK:-32768}"
+# verilator/iverilog in the verify step read TEMP/TMP as scratch dir; scrub env
+# (the sampling temperature is passed to gen via --temperature, not the env).
+unset TEMP TMP
+export TMPDIR="${TMPDIR:-/tmp}"
 
 require_engine
 mkdir -p "/run/user/$(id -u)"   # run_verify uses it for tempfiles
@@ -31,10 +35,10 @@ mkdir -p "/run/user/$(id -u)"   # run_verify uses it for tempfiles
 [ -f "$RB/aes/aes_sbox/aes_sbox.md" ] || ( cd "$RB" && make decrypt >/tmp/rb_decrypt.log 2>&1 ) || true
 [ -f "$RB/problems/aes/problems.jsonl" ] || ( cd "$RB" && "$RB_PY" generate_problem.py --task_level module >/tmp/rb_problems.log 2>&1 )
 
-log "generate RealBench $KEY (samples=$SAMPLES temp=$TEMP workers=$WORKERS)"
+log "generate RealBench $KEY (samples=$SAMPLES temp=$GEN_TEMP workers=$WORKERS)"
 mkdir -p "$RESULTS_DIR/$KEY"
 RB_ROOT="$RB" "$SYS_PY" "$BENCHINFRA_ROOT/benches/gen_realbench.py" --base-url "$OPENAI_BASE_URL" \
-  --model "$KEY" --workers $WORKERS --num-samples $SAMPLES --temperature $TEMP --max-tokens $MAXTOK \
+  --model "$KEY" --workers $WORKERS --num-samples $SAMPLES --temperature $GEN_TEMP --max-tokens $MAXTOK \
   > "$RESULTS_DIR/$KEY/realbench_gen.log" 2>&1 || log "gen nonzero"
 tail -3 "$RESULTS_DIR/$KEY/realbench_gen.log" 2>/dev/null || true
 

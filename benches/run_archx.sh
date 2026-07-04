@@ -20,14 +20,17 @@ load_verilog_toolchain
 
 KEY=$1; LIMIT=${2:-0}
 [ -z "$KEY" ] && { echo "usage: [SAMPLES=n TEMP=t MAXTOK=m] run_archx.sh <served_name> [limit]"; exit 1; }
-SAMPLES="${SAMPLES:-1}"; TEMP="${TEMP:-0}"; WORKERS="${WORKERS:-64}"; MAXTOK="${MAXTOK:-32768}"
+SAMPLES="${SAMPLES:-1}"; GEN_TEMP="${TEMP:-0}"; WORKERS="${WORKERS:-64}"; MAXTOK="${MAXTOK:-32768}"
 LIM_ARG=""; [ "$LIMIT" != "0" ] && LIM_ARG="--limit $LIMIT"
+# iverilog/vvp read TEMP/TMP as their scratch dir; scrub to avoid a dir named "0.8".
+unset TEMP TMP
+export TMPDIR="${TMPDIR:-/tmp}"
 
 require_engine
-log "ArchXBench $KEY (samples=$SAMPLES temp=$TEMP workers=$WORKERS maxtok=$MAXTOK)"
+log "ArchXBench $KEY (samples=$SAMPLES temp=$GEN_TEMP workers=$WORKERS maxtok=$MAXTOK)"
 mkdir -p "$RESULTS_DIR/$KEY/archxbench"
 "$SYS_PY" "$BENCHINFRA_ROOT/benches/run_archx.py" --base-url "$OPENAI_BASE_URL" --model "$KEY" \
-  --out "$RESULTS_DIR/$KEY/archxbench" --workers $WORKERS --num-samples $SAMPLES --temperature $TEMP \
+  --out "$RESULTS_DIR/$KEY/archxbench" --workers $WORKERS --num-samples $SAMPLES --temperature $GEN_TEMP \
   --max-tokens $MAXTOK $LIM_ARG > "$RESULTS_DIR/$KEY/archx.log" 2>&1 || log "archx nonzero"
 grep '\[archx\]' "$RESULTS_DIR/$KEY/archx.log" | tail -1
 log "DONE $KEY"
