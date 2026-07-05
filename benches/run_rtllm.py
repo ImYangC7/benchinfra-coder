@@ -16,7 +16,9 @@ import os
 import re
 import subprocess
 import tempfile
+import time
 import urllib.request
+import urllib.error
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 RTLLM_ROOT = os.environ.get("RTLLM_ROOT",
@@ -47,11 +49,23 @@ def query(base_url, model, prompt, max_tokens=32768, temperature=0.0):
     if max_tokens and max_tokens > 0:
         payload["max_tokens"] = max_tokens
     body = json.dumps(payload).encode()
-    req = urllib.request.Request(base_url.rstrip("/") + "/chat/completions",
-                                 data=body, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=1800) as r:
-        resp = json.load(r)
-    return resp["choices"][0]["message"].get("content") or ""
+    # Retry transient 5xx / connection errors (vLLM queue overflow under load).
+    last = None
+    for attempt in range(6):
+        try:
+            req = urllib.request.Request(base_url.rstrip("/") + "/chat/completions",
+                                         data=body, headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=1800) as r:
+                resp = json.load(r)
+            return resp["choices"][0]["message"].get("content") or ""
+        except urllib.error.HTTPError as e:
+            last = e
+            if e.code < 500:
+                raise
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+            last = e
+        time.sleep(min(2 ** attempt, 30))
+    raise last
 
 
 def extract_verilog(text):

@@ -13,7 +13,9 @@ import argparse
 import json
 import os
 import re
+import time
 import urllib.request
+import urllib.error
 from concurrent.futures import ThreadPoolExecutor
 
 RB_ROOT = os.environ.get("RB_ROOT",
@@ -36,18 +38,31 @@ def query(base_url, model, prompt, max_tokens=32768, temperature=0.0):
     if max_tokens and max_tokens > 0:
         payload["max_tokens"] = max_tokens
     body = json.dumps(payload).encode()
-    req = urllib.request.Request(base_url.rstrip("/") + "/chat/completions",
-                                 data=body, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=3600) as r:
-        resp = json.load(r)
-    choice = resp["choices"][0]
-    msg = choice.get("message", {})
-    return {
-        "content": msg.get("content") or "",
-        "reasoning_content": msg.get("reasoning_content") or "",
-        "finish_reason": choice.get("finish_reason"),
-        "usage": resp.get("usage", {}),
-    }
+    # Retry transient 5xx / connection errors (vLLM queue overflow under load).
+    # An unretried 500 silently zeros the sample (empty code -> syntax fail).
+    last = None
+    for attempt in range(6):
+        try:
+            req = urllib.request.Request(base_url.rstrip("/") + "/chat/completions",
+                                         data=body, headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=3600) as r:
+                resp = json.load(r)
+            choice = resp["choices"][0]
+            msg = choice.get("message", {})
+            return {
+                "content": msg.get("content") or "",
+                "reasoning_content": msg.get("reasoning_content") or "",
+                "finish_reason": choice.get("finish_reason"),
+                "usage": resp.get("usage", {}),
+            }
+        except urllib.error.HTTPError as e:
+            last = e
+            if e.code < 500:
+                raise
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+            last = e
+        time.sleep(min(2 ** attempt, 30))
+    raise last
 
 
 def extract_verilog(text):

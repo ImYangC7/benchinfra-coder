@@ -37,6 +37,10 @@ for entry in "${BENCHES[@]}"; do
   runner=$(echo "$entry" | cut -d'|' -f2 | xargs)
   denv=$(echo "$entry"   | cut -d'|' -f3 | xargs)
   log "############ $name ############"
+  # Run benches SERIALLY (no `&`). Each bench already saturates the engine with
+  # its own worker pool; launching several in parallel oversubscribes vLLM's
+  # request queue and triggers transient HTTP 500s. The runners now retry 5xx,
+  # but keeping benches serial is the primary safeguard against overload.
   env $denv bash "$BENCHINFRA_ROOT/benches/$runner" "$KEY" || log "$name nonzero (continuing)"
 done
 
