@@ -9,6 +9,10 @@
 #
 # Assumes the engine is already up on :$PROXY_PORT.
 # NOTE: <served_name> must be registered in verilog-eval/scripts/sv-generate.
+# NOTE: the official samples.mk fans out multi-sample generation via `column`.
+#   If `column` is not on PATH (util-linux), samples.mk silently degrades to a
+#   SINGLE sample and SAMPLES=4 quietly becomes average@1. load_verilog_toolchain
+#   warns on this; ensure util-linux's `column` is installed before average@4.
 #
 # Usage:  SAMPLES=4 TEMP=0.8 bash run_verilogeval.sh <served_name> [max_tokens]
 # ============================================================

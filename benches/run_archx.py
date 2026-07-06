@@ -75,12 +75,15 @@ def query(base_url, model, prompt, max_tokens=32768, temperature=0.0):
         payload["max_tokens"] = max_tokens
     body = json.dumps(payload).encode()
     # Retry transient 5xx / connection errors (vLLM queue overflow under load).
+    # timeout=3600 (not 1800): reasoning/"thinking" models can run away on hard
+    # designs and generate for >30min. A shorter client timeout cuts them off and
+    # the retry re-runs into the same runaway -> a wasted loop that never finishes.
     last = None
     for attempt in range(6):
         try:
             req = urllib.request.Request(base_url.rstrip("/") + "/chat/completions",
                                          data=body, headers={"Content-Type": "application/json"})
-            with urllib.request.urlopen(req, timeout=1800) as r:
+            with urllib.request.urlopen(req, timeout=3600) as r:
                 resp = json.load(r)
             return resp["choices"][0]["message"].get("content") or ""
         except urllib.error.HTTPError as e:

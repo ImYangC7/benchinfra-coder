@@ -120,6 +120,73 @@ window, ArchX/RealBench use `MAXTOK=49152`.
 
 ---
 
+## Known pitfalls
+
+Hard-won lessons from running reasoning ("thinking") models at scale. Read
+before evaluating a new checkpoint.
+
+### 1. Thinking runaway → timeout/retry deadlock
+Reasoning models can generate for **>30 min** on hard designs (ArchX
+fft/matmul/aes, RTLLM greedy, RealBench aes/e203) — a few runaway candidates
+never hit `max_tokens` and never stop. Symptoms:
+- completion counter frozen for a long time while the engine is still 100% busy
+  producing tokens (48 concurrent slots all full);
+- a whole run blocked on the last 1–2 candidates.
+
+Mitigations already baked in:
+- `run_rtllm.py` / `run_archx.py` use a **3600 s** client `urlopen` timeout (not
+  1800). A shorter timeout cuts a long think off mid-stream and the retry
+  re-runs into the *same* runaway → a wasted loop that never finishes. 3600 lets
+  the think finish or hit `max_tokens` first.
+- If a run still won't finish, **finalize from disk** (see recovery tools below)
+  instead of waiting: every already-saved `*_sN.v` is scored, missing runaway
+  candidates are counted as `syntax=0` fail (they never produced code anyway).
+  Impact is <1% — the missing ones are the hardest designs, which fail regardless.
+
+### 2. RealBench `max_tokens` quasi-deadlock
+On RealBench (only ~30–60 samples), a large `max_tokens` (e.g. 49152) lets a
+couple of runaway samples generate for **hours** without hitting the cap, hanging
+the whole bench. If a thinking model wedges here, **drop `max_tokens` to 16384**
+and rerun — note in your report that the token budget differs from other models.
+
+### 3. VerilogEval FUSE VCD-write D-state hang
+On a FUSE-backed working dir (e.g. dop-fuse), `vvp` processes that dump a VCD can
+wedge in uninterruptible **D-state** while writing, hanging the `make` verify.
+Use `benches/retest_ve_tmp.py` to re-run just the stuck sims in a real `/tmp`
+overlay; the official `sv-iv-analyze` still computes `pass_rate` for identical
+scoring.
+
+### 4. `column` missing → average@4 silently becomes average@1
+VerilogEval's `samples.mk` fans out multi-sample generation via `column`
+(util-linux). If `column` is not on PATH it **silently degrades to a single
+sample** — `SAMPLES=4` quietly scores average@1. `load_verilog_toolchain` warns
+on this; install util-linux's `column` before running average@4.
+
+### 5. RealBench verify needs `verilator` on PATH
+If `verilator` (oss-cad-suite/bin) isn't on PATH, RealBench syntax scores come
+back **all zero** — a false regression, not a model problem. Confirm the toolchain
+is loaded before trusting a 0.
+
+## Recovery tools
+
+For finalizing a run that a thinking runaway won't let finish cleanly:
+
+- `benches/archx_recover_summary.py` — re-verify every saved ArchX `*_sN.v` from
+  disk and write `summary.json` in the exact schema `run_archx.py` would. Missing
+  candidates count as `syntax=0` (default), or pass `--regen` to regenerate them
+  against a live engine. Guards `verify_candidate` with try/except so one
+  pathological file (iverilog 120 s cap → `TimeoutExpired`) can't crash recovery.
+  ```bash
+  python benches/archx_recover_summary.py --model M --out results/M/archxbench --num-samples 5
+  ```
+- `benches/retest_ve_tmp.py` — regenerate VerilogEval iv-test logs in `/tmp` to
+  dodge the FUSE VCD hang (pitfall 3). Only redoes missing / TIMEOUT logs.
+  ```bash
+  K=4 python benches/retest_ve_tmp.py <task_dir> <dataset_dir> <problems_file> [jobs]
+  ```
+
+---
+
 ## Layout
 
 ```
@@ -138,7 +205,9 @@ benchinfra-coder/
 │   ├── run_realbench.sh / gen_realbench.py
 │   ├── run_kernelbench.sh
 │   ├── kb_sharded_eval.sh #   8-shard KB eval (avoids mp.Pool crash)
-│   └── kb_merge_shards.py
+│   ├── kb_merge_shards.py
+│   ├── archx_recover_summary.py  # finalize ArchX from disk (runaway recovery)
+│   └── retest_ve_tmp.py   #   re-run stuck VerilogEval sims in /tmp (FUSE hang)
 └── lib/
     └── common.sh          # log / require_engine / wait_for_engine / toolchain
 ```
